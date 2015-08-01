@@ -1,0 +1,293 @@
+/*******************************************************************************
+* Copyright 2002-2014, OpenNebula Project (OpenNebula.org), C12G Labs
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+* http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+******************************************************************************/
+
+// Edited by Seham Basabain 2015 
+// MSc project Cloud Computing
+//--------------------Importing packages--------------------------------------------------------
+import org.opennebula.client.Client;
+import org.opennebula.client.OneResponse;
+import org.opennebula.client.vm.VirtualMachine;
+import org.opennebula.client.vm.VirtualMachinePool;
+import org.opennebula.client.host.Host;
+import org.opennebula.client.host.HostPool;
+import java.util.Scanner;
+import java.io.Console;
+import java.util.Arrays;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+
+public class VMmigrate{
+
+    public static void main(String[] args)
+    {
+        
+//------------------------------------------------------------------------------------------------
+        // First of all, a Client object has to be created.
+        // Here the client will try to connect to OpenNebula using the default
+        // options: the auth. file will be assumed to be at $ONE_AUTH, and the
+        // endpoint will be set to the environment variable $ONE_XMLRPC.
+        
+        Client oneClient;
+        String passwd;
+
+//----------------Access Authorization---------------------------------------------------------
+    
+        String username = System.getProperty("user.name");
+        passwd = new String(System.console().readPassword("[%s]", "Password:"));
+
+        try
+        {
+            oneClient = new Client(username + ":" + passwd, "http://10.10.0.1:2633/RPC2");
+        }
+        catch (Exception e)
+        {
+            System.out.println(e.getMessage());
+            return;
+        }
+  
+       OneResponse rc,rc1,rc2,rc3;
+        
+          try
+        {
+            
+         Scanner   in = new Scanner(System.in);
+
+//----------------------------------------------------------------------------------------------------
+
+            // The reference is lost, but we can ask OpenNebula about the VM
+            // again. This time however, we are going to use the VM pool
+            VirtualMachinePool vmPool = new VirtualMachinePool(oneClient);
+                 
+            // Remember that we have to ask the pool to retrieve the information
+            // from OpenNebula
+            rc = vmPool.info();
+
+            if(rc.isError())
+                throw new Exception( rc.getErrorMessage() );
+
+            System.out.println("\nThese are all the Virtual Machines in the pool:");
+            for ( VirtualMachine vmachine : vmPool )
+            {
+                System.out.println("\tID :" + vmachine.getId() + ", Name :" + vmachine.getName());
+
+            }
+
+            HostPool hostPool=new HostPool(oneClient);
+
+            rc1=hostPool.info();
+
+            if(rc1.isError())
+                throw new Exception(rc1.getErrorMessage());
+            String HostInfo = rc1.getMessage();
+
+            //printing information about host from the host pool
+            System.out.println("\nThese are all Hosts in the pool:");
+            for( Host hosts : hostPool)
+            {     
+            System.out.println("Host Name:\t"+ hosts.getName()+ " Host ID:\t"+ hosts.getId()+ "\n");
+            }
+
+//-------------Migrating the VM--------------------------------------------------------------------------
+
+            Scanner   input = new Scanner(System.in);
+
+            //Asking the user to specify VMId for the VM he wants to migrate
+            System.out.println("Please Enter the VM ID which you want to migrate: ");
+            int VMId=input.nextInt();
+
+            // We can create a representation for this VM, using the entered VM-ID
+            VirtualMachine vm = new VirtualMachine(VMId, oneClient);
+ 
+             rc = vm.info();
+
+             String HostID = vm.xpath("HISTORY_RECORDS/HISTORY[last()]/HID");
+             System.out.println("\nCurrent Host of this VM is:\t" + HostID);
+
+            long migrateTotalTime,startTime,endTime; 
+//----------------------------------------------------------------------------------------------------
+// workload in each host
+int VMinHost=0;
+int VMinPrevHost=100;
+int i=0;
+int j=0;
+int preferredHost=0;
+// Host ranking history
+System.out.println("********************************");
+System.out.println("Here is the Host Ranking profile");
+
+String[] lines = HostInfo.split("\\<");
+String pattern = "^RUNNING_VMS";   
+
+
+     for (String line : lines)   
+     {
+     // Create a Pattern object
+      Pattern r = Pattern.compile(pattern);
+     // Now create matcher object.
+      Matcher m = r.matcher(line);
+
+        if (m.find( ))
+        {
+        //get number of VMs running in each host  
+        VMinHost= Integer.parseInt(line.substring(line.length() - 1));
+        System.out.println("Host "+ i +" has "+ VMinHost+ " current deployed VMs ");
+        if(VMinHost<VMinPrevHost)
+        {        
+          preferredHost=i;
+        }
+        i++;
+        VMinPrevHost=VMinHost;
+        }
+     }
+System.out.println("**********************************");
+System.out.println("preferred Host is "+ preferredHost);
+System.out.println("**********************************");
+//--------------------------------------------------------------------------------------------------------
+
+            //Host ID which VM is to be migrated to 
+           System.out.println("Please Enter the host Id where migrating this VM to");
+            int migHostId = input.nextInt();
+
+            //VM should be migrated to another host
+            rc = vm.info();
+
+            int oldHost = Integer.parseInt(HostID);
+
+
+            if (oldHost != migHostId)  
+
+           {
+                
+                //start migration timer
+                startTime= System.nanoTime();
+                // Live migration
+                rc2 = vm.migrate(migHostId, true);
+               
+
+                if (!(rc2.isError())) {
+
+
+                    rc = vm.info();
+
+           
+              HostID = vm.xpath("HISTORY_RECORDS/HISTORY[last()]/HID");
+             
+              // chick if the VM has the same host ID means that it has not migrated yet 
+              while (oldHost == Integer.parseInt(HostID))
+                   {    Thread.sleep(1000); 
+
+                        rc = vm.info();
+                        HostID = vm.xpath("HISTORY_RECORDS/HISTORY[last()]/HID");
+                    }
+
+                    endTime = System.nanoTime();
+                    migrateTotalTime = endTime - startTime;
+
+              // Host pool update after migration
+              HostPool UpdatedhostPool=new HostPool(oneClient);
+              rc3=UpdatedhostPool.info();
+              String updatedHostInfo = rc3.getMessage();
+
+
+              if(rc3.isError())
+                throw new Exception(rc3.getErrorMessage());
+              
+
+              // Updated Host ranking history
+              System.out.println("********************************");
+              System.out.println("Here is the Updated Host Ranking profile");
+
+
+              String[] liness = updatedHostInfo.split("\\<");
+ 
+              for (String linee : liness)   
+              {
+              // Create a Pattern object
+              Pattern r = Pattern.compile(pattern);
+              // Now create matcher object.
+              Matcher m = r.matcher(linee);
+
+                 if (m.find( ))
+                 {
+                   //get number of VMs in each host  
+                    VMinHost= Integer.parseInt(linee.substring(linee.length() - 1));
+                    if(oldHost!=j) 
+                    {                
+                     System.out.println("Host "+ j +" has "+ VMinHost+ " current deployed VMs ");
+                    }
+
+                    if(oldHost==j)
+                    {
+                     VMinPrevHost=(VMinHost - 1);
+                     System.out.println("Host "+ j +" has "+ VMinPrevHost+ " current deployed VMs ");
+                    }
+                  
+                   j++;
+       
+                 }
+               }
+
+                    System.out.println("migrated in " + migrateTotalTime + "\t nanasecond");
+
+                    rc = vm.info();
+
+                
+                    HostID = vm.xpath("HISTORY_RECORDS/HISTORY[last()]/HID");
+
+                   // printing the new hostID
+                    System.out.println("The VM new host is\t" + HostID); 
+
+                } else
+                    System.out.println(rc2.getErrorMessage());
+         } 
+          else
+          System.out.println("VM should be migrated to a different Host");
+
+
+System.out.println("--------------------------------------------------------------------------------------------------------------");
+
+        }
+        catch( Exception e)
+       {
+
+            System.out.println(e.getMessage());
+        }
+
+
+    }
+
+    public static void printVMachinePool (VirtualMachinePool vmPool)
+    {
+        System.out.println("--------------------------------------------");
+        System.out.println("Number of VMs: " + vmPool.getLength());
+        System.out.println("User ID\t\tName\t\tEnabled");
+
+        // You can use the for-each loops with the OpenNebula pools
+        for( VirtualMachine vm : vmPool )
+        {
+            String id = vm.getId();
+            String name = vm.getName();
+            String enab = vm.xpath("enabled");
+
+            System.out.println(id+"\t\t"+name+"\t\t"+enab);
+        }
+
+        System.out.println("--------------------------------------------");
+    }
+}
+
+
+                                            
